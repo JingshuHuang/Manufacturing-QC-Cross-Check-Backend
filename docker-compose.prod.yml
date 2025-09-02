@@ -1,0 +1,83 @@
+version: "3.8"
+
+services:
+  # Manufacturing QC Backend
+  app:
+    build: .
+    container_name: manufacturing-qc-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://qc_user:${DB_PASSWORD}@db:5432/qc_system
+      - DEBUG=false
+      - EASYOCR_GPU=false
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - manufacturing-qc
+
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: manufacturing-qc-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=qc_system
+      - POSTGRES_USER=qc_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qc_user -d qc_system"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - manufacturing-qc
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: manufacturing-qc-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot
+    depends_on:
+      - app
+    networks:
+      - manufacturing-qc
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: manufacturing-qc-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - manufacturing-qc
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  manufacturing-qc:
+    driver: bridge
